@@ -1,17 +1,17 @@
 package io.github.dockyardmc
 
-import io.github.dockyardmc.commands.Commands
-import io.github.dockyardmc.commands.PlayerArgument
-import io.github.dockyardmc.commands.simpleSuggestion
+import io.github.dockyardmc.commands.*
 import io.github.dockyardmc.datagen.EventsDocumentationGenerator
 import io.github.dockyardmc.events.Events
 import io.github.dockyardmc.events.PlayerJoinEvent
 import io.github.dockyardmc.events.PlayerLeaveEvent
+import io.github.dockyardmc.events.ServerStartEvent
 import io.github.dockyardmc.extentions.broadcastMessage
 import io.github.dockyardmc.inventory.give
 import io.github.dockyardmc.item.ConsumableAnimation
 import io.github.dockyardmc.item.ConsumableItemComponent
 import io.github.dockyardmc.item.ItemStack
+import io.github.dockyardmc.motd.ServerStatusManager
 import io.github.dockyardmc.player.systems.GameMode
 import io.github.dockyardmc.registry.Blocks
 import io.github.dockyardmc.registry.Items
@@ -46,7 +46,6 @@ fun main(args: Array<String>) {
         }
     }
 
-
     Events.on<PlayerJoinEvent> {
         val player = it.player
 
@@ -70,6 +69,24 @@ fun main(args: Array<String>) {
         )
 
         player.give(item)
+    }
+
+    Commands.add("/setMotd") {
+        addArgument("motd", StringArgument(BrigadierStringType.GREEDY_PHRASE))
+        execute {
+            val motd = getArgument<String>("motd")
+            ServerStatusManager.setDescription(motd)
+        }
+    }
+
+    Commands.add("/setIconFromResource") {
+        addArgument("icon", StringArgument())
+        execute {
+            val icon = getArgument<String>("icon")
+            DockyardServer::class.java.getResource(icon)?.let { url ->
+                ServerStatusManager.setIconFromResource(url)
+            }?: throw CommandException("Resource not found")
+        }
     }
 
     Events.on<PlayerLeaveEvent> {
