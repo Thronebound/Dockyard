@@ -6,6 +6,8 @@
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/Dockyard.test.iml" filepath="$PROJECT_DIR$/.idea/modules/Dockyard.test.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/io.github.dockyardmc.Dockyard.main.iml" filepath="$PROJECT_DIR$/.idea/modules/io.github.dockyardmc.Dockyard.main.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/io.github.dockyardmc.Dockyard.test.iml" filepath="$PROJECT_DIR$/.idea/modules/io.github.dockyardmc.Dockyard.test.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/thronebound.Dockyard.main.iml" filepath="$PROJECT_DIR$/.idea/modules/thronebound.Dockyard.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/thronebound.Dockyard.test.iml" filepath="$PROJECT_DIR$/.idea/modules/thronebound.Dockyard.test.iml" />
     </modules>
   </component>
 </project>
