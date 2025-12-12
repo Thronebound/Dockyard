@@ -16,7 +16,7 @@ val dockyardVersion = properties["dockyard.version"]!!
 val gitBranch = "git rev-parse --abbrev-ref HEAD".runCommand()
 val gitCommit = "git rev-parse --short=8 HEAD".runCommand()
 
-group = "io.github.dockyardmc"
+group = "gg.thronebound.dockyard"
 version = "${dockyardVersion}_${gitCommit}@${gitBranch}_mc${minecraftVersion}"
 
 kotlin {
@@ -165,7 +165,7 @@ publishing {
     }
     publications {
         register<MavenPublication>("maven") {
-            groupId = "io.github.dockyardmc"
+            groupId = "gg.thronebound.dockyard"
             artifactId = "dockyard"
             version = dockyardVersion.toString()
             from(components["java"])
@@ -217,7 +217,7 @@ fun embed(): String {
           "embeds": [
             {
               "title": "$title",
-              "description": "`io.github.dockyardmc:dockyard:$dockyardVersion` was successfully published to maven **$target**!",
+              "description": "`gg.thronebound.dockyard:dockyard:$dockyardVersion` was successfully published to maven **$target**!",
               "color": $color
             }
           ],

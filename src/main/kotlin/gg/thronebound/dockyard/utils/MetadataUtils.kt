@@ -1,0 +1,20 @@
+package gg.thronebound.dockyard.utils
+
+import gg.thronebound.dockyard.entity.Entity
+import gg.thronebound.dockyard.entity.metadata.EntityMetadata
+import gg.thronebound.dockyard.entity.metadata.EntityMetadataType
+
+fun mergeEntityMetadata(base: Entity, layer: Map<EntityMetadataType, EntityMetadata>?): List<EntityMetadata> {
+    if(layer == null) return base.metadata.getValues().values.toList()
+    val metadata = base.metadata.getValues()
+    val final = mutableMapOf<EntityMetadataType, EntityMetadata>()
+    metadata.forEach {
+        val index = it.key
+        final[index] = it.value
+    }
+    layer.forEach {
+        val index = it.key
+        final[index] = it.value
+    }
+    return final.values.toList()
+}

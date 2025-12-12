@@ -1,0 +1,110 @@
+package gg.thronebound.dockyard.noxesium.rules
+
+import com.noxcrew.noxesium.api.util.DebugOption
+import gg.thronebound.dockyard.item.ItemStack
+import gg.thronebound.dockyard.noxesium.protocol.clientbound.ClientboundNoxesiumResetPacket
+import gg.thronebound.dockyard.player.Player
+import gg.thronebound.dockyard.utils.Disposable
+import gg.thronebound.dockyard.utils.viewable.Viewable
+
+class NoxesiumRuleContainer : Viewable(), Disposable {
+    override var autoViewable: Boolean = false
+
+    private val _noxesiumRules: MutableMap<Int, NoxesiumServerRule<*>> = mutableMapOf()
+    val noxesiumRules get() = _noxesiumRules.toMap()
+
+    fun set(rule: NoxesiumServerRule<*>) {
+        _noxesiumRules[rule.ruleIndex] = rule
+        sendUpdate()
+    }
+
+    fun remove(type: Int) {
+        _noxesiumRules.remove(type)
+        sendUpdate()
+    }
+
+    fun remove(rule: NoxesiumRules.RuleFunction<*>) {
+        _noxesiumRules.remove(rule.index)
+    }
+
+    fun sendUpdate() {
+        viewers.forEach(::updateViewer)
+    }
+
+    fun setCameraLocked(value: Boolean) {
+        set(NoxesiumRules.Server.CAMERA_LOCKED.createRule(value))
+    }
+
+    fun setHeldItemOffset(value: Int) {
+        set(NoxesiumRules.Server.HELD_ITEM_NAME_OFFSET.createRule(value))
+    }
+
+    fun disableVanillaMusic(value: Boolean) {
+        set(NoxesiumRules.Server.DISABLE_VANILLA_MUSIC.createRule(value))
+    }
+
+    fun showMapUi(value: Boolean) {
+        set(NoxesiumRules.Server.SHOW_MAP_IN_UI.createRule(value))
+    }
+
+    fun disableMapUi(value: Boolean) {
+        set(NoxesiumRules.Server.DISABLE_MAP_UI.createRule(value))
+    }
+
+    fun disableBoatCollision(value: Boolean) {
+        set(NoxesiumRules.Server.DISABLE_BOAT_COLLISION.createRule(value))
+    }
+
+    fun customCreativeItems(value: List<ItemStack>) {
+        set(NoxesiumRules.Server.CUSTOM_CREATIVE_ITEMS.createRule(value))
+    }
+
+    fun disableDefferedChunkUpdates(value: Boolean) {
+        set(NoxesiumRules.Server.DISABLE_DEFFERED_CHUNK_UPDATES.createRule(value))
+    }
+
+    fun overrideGraphicsMode(value: NoxesiumRules.Server.GraphicsType) {
+        set(NoxesiumRules.Server.OVERRIDE_GRAPHICS_MODE.createRule(value))
+    }
+
+    fun setRiptideCoyoteTime(value: Int) {
+        set(NoxesiumRules.Server.RIPTIDE_COYOTE_TIME.createRule(value))
+    }
+
+    fun setRiptidePreCharging(value: Boolean) {
+        set(NoxesiumRules.Server.RIPTIDE_PRE_CHARGING.createRule(value))
+    }
+
+    fun restrictDebugOptions(value: List<DebugOption>) {
+        set(NoxesiumRules.Server.RESTRICT_DEBUG_OPTIONS.createRule(value.map { it.keyCode }))
+    }
+
+    private fun updateViewer(player: Player) {
+        // Reset all server rules
+        player.noxesiumIntegration.schedule {
+            player.sendPluginMessage(ClientboundNoxesiumResetPacket(0x01))
+            player.sendPluginMessage(player.noxesiumIntegration.getRulesPacket())
+        }
+    }
+
+    override fun addViewer(player: Player): Boolean {
+        if (!super.addViewer(player)) return false
+        if (!player.noxesiumIntegration.isUsingNoxesium.value) return false
+
+        updateViewer(player)
+        return true
+    }
+
+    override fun removeViewer(player: Player) {
+        super.removeViewer(player)
+        if (!player.noxesiumIntegration.isUsingNoxesium.value) return
+        player.noxesiumIntegration.schedule {
+            player.sendPluginMessage(ClientboundNoxesiumResetPacket(0x01))
+        }
+    }
+
+    override fun dispose() {
+        _noxesiumRules.clear()
+        clearViewers()
+    }
+}

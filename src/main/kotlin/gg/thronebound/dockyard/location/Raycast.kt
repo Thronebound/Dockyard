@@ -1,0 +1,42 @@
+package gg.thronebound.dockyard.location
+
+import gg.thronebound.dockyard.entity.Entity
+import gg.thronebound.dockyard.registry.Blocks
+import gg.thronebound.dockyard.math.vectors.Vector3d
+import gg.thronebound.dockyard.math.vectors.Vector3f
+import kotlin.math.floor
+
+fun blockRaycast(origin: Location, direction: Vector3d, maxDistance: Double, stepSize: Double = 0.1): Pair<Location, gg.thronebound.dockyard.world.block.Block>? {
+    var currentPosition = origin
+    var distanceTraveled = 0.0
+    val stepVector = direction.normalized() * Vector3d(stepSize)
+
+    while (distanceTraveled < maxDistance) {
+        currentPosition = currentPosition.add(stepVector)
+        distanceTraveled += stepSize
+
+        val result = hitSolidBlock(currentPosition)
+
+        if (result.first) {
+            return currentPosition to result.second
+        }
+    }
+
+    return null
+}
+
+fun blockRaycast(entity: Entity, maxDistance: Double, stepSize: Double = 0.1): Pair<Location, gg.thronebound.dockyard.world.block.Block>? {
+    val location = entity.location.add(Vector3f(0f, entity.type.dimensions.eyeHeight, 0f))
+    val result = blockRaycast(location, entity.getFacingDirectionVector().toVector3d(), maxDistance) ?: return null
+    return result.first to result.second
+}
+
+fun hitSolidBlock(position: Location): Pair<Boolean, gg.thronebound.dockyard.world.block.Block> {
+    val blockX = floor(position.x).toInt()
+    val blockY = floor(position.y).toInt()
+    val blockZ = floor(position.z).toInt()
+
+    val block = position.world.getBlock(blockX, blockY, blockZ)
+    val isSolid = block.registryBlock.isSolid
+    return if (!isSolid) (false to Blocks.AIR.toBlock()) else (true to block)
+}

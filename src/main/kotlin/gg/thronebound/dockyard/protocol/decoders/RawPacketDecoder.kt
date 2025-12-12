@@ -1,0 +1,49 @@
+@file:OptIn(ExperimentalStdlibApi::class)
+
+package gg.thronebound.dockyard.protocol.decoders
+
+import cz.lukynka.prettylog.LogType
+import cz.lukynka.prettylog.log
+import gg.thronebound.dockyard.extentions.readVarInt
+import gg.thronebound.dockyard.protocol.PacketParser
+import gg.thronebound.dockyard.protocol.PlayerNetworkManager
+import gg.thronebound.dockyard.protocol.WrappedServerboundPacket
+import gg.thronebound.dockyard.protocol.packets.registry.ServerPacketRegistry
+import io.netty.buffer.ByteBuf
+import io.netty.channel.ChannelHandlerContext
+import io.netty.handler.codec.DecoderException
+import io.netty.handler.codec.MessageToMessageDecoder
+
+class RawPacketDecoder(val processor: PlayerNetworkManager) : MessageToMessageDecoder<ByteBuf>() {
+
+    @OptIn(ExperimentalStdlibApi::class)
+    override fun decode(connection: ChannelHandlerContext, buffer: ByteBuf, out: MutableList<Any>) {
+        if (!connection.channel().isActive) return // the connection was closed
+
+        try {
+            val packetId = buffer.readVarInt()
+            val packetIdByteRep = "0x${packetId.toByte().toHexString()}"
+            val state = processor.state
+
+            val size = buffer.readableBytes()
+
+            val packet = PacketParser.parse(packetId, buffer, state)
+
+            // no packet class was found to handle this packet, so we skip the bytes and log error
+            if (packet == null) {
+                log("Received unknown packet with id $packetId ($packetIdByteRep) during phase: ${state.name} [${ServerPacketRegistry.getSkippedFromIdOrNull(packetId, state)}]", LogType.ERROR)
+                buffer.skipBytes(buffer.readableBytes())
+                return
+            }
+
+            // if the buffer is still readable, there are leftover bytes we didn't read
+            if (buffer.isReadable) throw DecoderException("Packet ${packet::class.simpleName} ($packetIdByteRep) was larger than expected, extra bytes: ${buffer.readableBytes()}")
+
+            out.add(WrappedServerboundPacket(packet, size, packetId))
+
+        } catch (ex: Exception) {
+            log("Error occurred while decoding packet: ", LogType.ERROR)
+            log(ex)
+        }
+    }
+}

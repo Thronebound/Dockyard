@@ -1,0 +1,21 @@
+package gg.thronebound.dockyard.entity
+
+import cz.lukynka.bindables.Bindable
+import gg.thronebound.dockyard.extentions.sendPacket
+import gg.thronebound.dockyard.location.Location
+import gg.thronebound.dockyard.protocol.packets.play.clientbound.ClientboundEntityEventPacket
+import gg.thronebound.dockyard.protocol.packets.play.clientbound.EntityEvent
+import gg.thronebound.dockyard.registry.EntityTypes
+import gg.thronebound.dockyard.registry.registries.EntityType
+
+abstract class Ravager(location: Location) : Entity(location) {
+
+    override var type: EntityType = EntityTypes.RAVAGER
+    override val health: Bindable<Float> = bindablePool.provideBindable(100f)
+    override var inventorySize: Int = 0
+
+    fun playAttackAnimation() {
+        viewers.sendPacket(ClientboundEntityEventPacket(this, EntityEvent.RAVAGER_ATTACK_ANIMATION))
+    }
+
+}

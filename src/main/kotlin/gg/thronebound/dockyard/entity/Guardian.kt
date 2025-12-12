@@ -1,0 +1,34 @@
+package gg.thronebound.dockyard.entity
+
+import cz.lukynka.bindables.Bindable
+import gg.thronebound.dockyard.entity.metadata.EntityMetaValue
+import gg.thronebound.dockyard.entity.metadata.EntityMetadata
+import gg.thronebound.dockyard.entity.metadata.EntityMetadataType
+import gg.thronebound.dockyard.location.Location
+import gg.thronebound.dockyard.registry.EntityTypes
+import gg.thronebound.dockyard.registry.registries.EntityType
+
+open class Guardian(location: Location): Entity(location) {
+
+    companion object {
+        val RETRACTING_SPIKES_METADATA = EntityMetadataType.GUARDIAN_RETRACTING_SPIKES
+        val TARGET_ENTITY_ID = EntityMetadataType.GUARDIAN_TARGET_ENTITY_ID
+    }
+
+    override var type: EntityType = EntityTypes.GUARDIAN
+    override val health: Bindable<Float> = bindablePool.provideBindable(30f)
+    override var inventorySize: Int = 0
+
+    val isRetractingSpikes: Bindable<Boolean> = bindablePool.provideBindable(false)
+    val target: Bindable<Entity?> = bindablePool.provideBindable(null)
+
+    init {
+        isRetractingSpikes.valueChanged { change ->
+            metadata[RETRACTING_SPIKES_METADATA] = EntityMetadata(RETRACTING_SPIKES_METADATA, EntityMetaValue.BOOLEAN, change.newValue)
+        }
+
+        target.valueChanged { change ->
+            metadata[TARGET_ENTITY_ID] = EntityMetadata(TARGET_ENTITY_ID, EntityMetaValue.VAR_INT, change.newValue?.id ?: 0)
+        }
+    }
+}

@@ -1,0 +1,37 @@
+package gg.thronebound.dockyard.implementations.commands
+
+import gg.thronebound.dockyard.commands.*
+import gg.thronebound.dockyard.player.Player
+import gg.thronebound.dockyard.protocol.packets.play.clientbound.SoundCategory
+import gg.thronebound.dockyard.sounds.Sound
+import gg.thronebound.dockyard.sounds.playSound
+
+class SoundCommand {
+
+    init {
+        Commands.add("/playsound") {
+            withPermission("dockyard.commands.playsound")
+            withDescription("Plays sounds to players")
+
+            addArgument("sound", SoundArgument())
+            addArgument("category", EnumArgument(SoundCategory::class))
+            addArgument("player", PlayerArgument())
+            addOptionalArgument("volume", FloatArgument())
+            addOptionalArgument("pitch", FloatArgument())
+
+            execute {
+                val player = getArgument<Player>("player")
+                val sound = getArgument<Sound>("sound")
+                val volume = getArgumentOrNull<Float>("volume") ?: 1f
+                val pitch = getArgumentOrNull<Float>("pitch") ?: 1f
+                val category = getEnumArgument<SoundCategory>("category")
+
+                sound.category = category
+                sound.pitch = pitch
+                sound.volume = volume
+
+                player.playSound(sound, player.location)
+            }
+        }
+    }
+}

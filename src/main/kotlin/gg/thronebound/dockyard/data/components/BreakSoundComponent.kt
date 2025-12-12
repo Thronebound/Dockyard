@@ -1,0 +1,28 @@
+package gg.thronebound.dockyard.data.components
+
+import gg.thronebound.dockyard.data.DataComponent
+import gg.thronebound.dockyard.data.HashHolder
+import gg.thronebound.dockyard.data.StaticHash
+import gg.thronebound.dockyard.protocol.NetworkReadable
+import gg.thronebound.dockyard.sounds.SoundEvent
+import io.netty.buffer.ByteBuf
+
+data class BreakSoundComponent(val sound: SoundEvent) : DataComponent() {
+
+    companion object : NetworkReadable<BreakSoundComponent> {
+        val CODEC = SoundEvent.CODEC
+        val STREAM_CODEC = SoundEvent.STREAM_CODEC
+
+        override fun read(buffer: ByteBuf): BreakSoundComponent {
+            return BreakSoundComponent(STREAM_CODEC.read(buffer))
+        }
+    }
+
+    override fun write(buffer: ByteBuf) {
+        STREAM_CODEC.write(buffer, sound)
+    }
+
+    override fun hashStruct(): HashHolder {
+        return StaticHash(sound.hashStruct().getHashed())
+    }
+}

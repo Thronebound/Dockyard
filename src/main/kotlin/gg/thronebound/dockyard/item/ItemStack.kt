@@ -1,0 +1,322 @@
+package gg.thronebound.dockyard.item
+
+import gg.thronebound.dockyard.attributes.AttributeModifier
+import gg.thronebound.dockyard.data.DataComponent
+import gg.thronebound.dockyard.data.DataComponentPatch
+import gg.thronebound.dockyard.data.components.*
+import gg.thronebound.dockyard.extentions.readVarInt
+import gg.thronebound.dockyard.extentions.writeVarInt
+import gg.thronebound.dockyard.nbt.nbt
+import gg.thronebound.dockyard.noxesium.Noxesium
+import gg.thronebound.dockyard.protocol.DataComponentHashable
+import gg.thronebound.dockyard.protocol.NbtWritable
+import gg.thronebound.dockyard.protocol.NetworkWritable
+import gg.thronebound.dockyard.protocol.types.ConsumeEffect
+import gg.thronebound.dockyard.protocol.types.ItemRarity
+import gg.thronebound.dockyard.registry.Items
+import gg.thronebound.dockyard.registry.Sounds
+import gg.thronebound.dockyard.registry.registries.Item
+import gg.thronebound.dockyard.registry.registries.ItemRegistry
+import io.github.dockyardmc.scroll.Component
+import io.github.dockyardmc.scroll.CustomColor
+import io.github.dockyardmc.scroll.extensions.stripComponentTags
+import io.github.dockyardmc.scroll.extensions.toComponent
+import gg.thronebound.dockyard.sounds.BuiltinSoundEvent
+import gg.thronebound.dockyard.utils.CustomDataHolder
+import io.netty.buffer.ByteBuf
+import net.kyori.adventure.nbt.*
+import java.io.UnsupportedEncodingException
+
+data class ItemStack(
+    var material: Item,
+    var amount: Int = 1,
+    val components: DataComponentPatch,
+    val existingMeta: ItemStackMeta? = null,
+    val attributes: Collection<AttributeModifier> = listOf()
+) : NetworkWritable, DataComponentHashable, NbtWritable {
+
+    constructor(material: Item, amount: Int, vararg components: DataComponent, attributes: Collection<AttributeModifier> = listOf()) : this(material, amount, DataComponentPatch.fromList(components.toList()), attributes = attributes)
+    constructor(material: Item, vararg components: DataComponent, amount: Int = 1, attributes: Collection<AttributeModifier> = listOf()) : this(material, amount, DataComponentPatch.fromList(components.toList()), attributes = attributes)
+    constructor(material: Item, components: Set<DataComponent>, amount: Int = 1, attributes: Collection<AttributeModifier> = listOf()) : this(material, amount, DataComponentPatch.fromList(components.toList()), attributes = attributes)
+
+    init {
+        require(amount >= 1) { "ItemStack amount cannot be less than 1" }
+    }
+
+    companion object {
+        val AIR = ItemStack(Items.AIR, 1)
+
+        fun read(buffer: ByteBuf, isPatch: Boolean = true, isTrusted: Boolean = true): ItemStack {
+            val count = buffer.readVarInt()
+            if (count <= 0) return AIR
+
+            val itemId = buffer.readVarInt()
+
+            val componentsPatch = DataComponentPatch.read(buffer, isPatch, isTrusted)
+            return ItemStack(ItemRegistry.getByProtocolId(itemId), count, componentsPatch)
+        }
+    }
+
+    override fun write(buffer: ByteBuf) {
+        if (this.material == Items.AIR) {
+            buffer.writeVarInt(0)
+            return
+        }
+
+        buffer.writeVarInt(this.amount)
+        buffer.writeVarInt(this.material.getProtocolId())
+        DataComponentPatch.patchNetworkType(components.components).write(buffer)
+    }
+
+    override fun getNbt(): CompoundBinaryTag {
+        return nbt {
+            withString("id", material.getEntryIdentifier())
+            withInt("count", amount)
+            withCompound("components", CompoundBinaryTag.empty())
+        }
+    }
+
+    fun withDisplayName(displayName: String): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withDisplayName(displayName) }.toItemStack()
+    }
+
+    fun withFood(nutrition: Int, saturation: Float = 0f, canAlwaysEat: Boolean = true): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withFood(nutrition, saturation, canAlwaysEat) }.toItemStack()
+    }
+
+    fun withHideTooltip(hideTooltip: Boolean): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withHideTooltip(hideTooltip) }.toItemStack()
+    }
+
+    fun withComponent(vararg component: DataComponent): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withComponent(component.toList()) }.toItemStack()
+    }
+
+    fun withConsumable(
+        consumeTimeSeconds: Float,
+        animation: ConsumableComponent.Animation = ConsumableComponent.Animation.EAT,
+        sound: String = Sounds.ENTITY_GENERIC_EAT,
+        hasParticles: Boolean = true,
+        consumeEffects: List<ConsumeEffect> = listOf()
+    ): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { this.withConsumable(consumeTimeSeconds, animation, BuiltinSoundEvent(sound), hasParticles, consumeEffects) }.toItemStack()
+    }
+
+    fun withRarity(rarity: ItemRarity): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withRarity(rarity) }.toItemStack()
+    }
+
+    fun withUnbreakable(unbreakable: Boolean): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withUnbreakable(unbreakable) }.toItemStack()
+    }
+
+    fun withMaxStackSize(maxStackSize: Int): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withMaxStackSize(maxStackSize) }.toItemStack()
+    }
+
+    fun withAmount(amount: Int): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withAmount(amount) }.toItemStack()
+    }
+
+    inline fun withAmount(amount: (Int) -> Int): ItemStack {
+        return withAmount(amount.invoke(this.amount))
+    }
+
+    fun withLore(vararg lore: String): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withLore(lore.toList()) }.toItemStack()
+    }
+
+    fun withLore(lore: List<String>): ItemStack {
+        return ItemStackMeta.fromItemStack(this).apply { withLore(lore) }.toItemStack()
+    }
+
+    inline fun withMeta(builder: ItemStackMeta.() -> Unit): ItemStack {
+        val meta = ItemStackMeta.fromItemStack(this)
+        meta.apply(builder)
+        return meta.toItemStack()
+    }
+
+    @JvmName("withCustomModelDatafloatListFloat")
+    fun withCustomModelData(floats: List<Float>): ItemStack {
+        return withMeta { withCustomModelData(floats) }
+    }
+
+    @JvmName("withCustomModelDatafloatFloat")
+    fun withCustomModelData(vararg float: Float): ItemStack {
+        return withMeta { withCustomModelData(*float) }
+    }
+
+    @JvmName("withCustomModelDataflagsListBoolean")
+    fun withCustomModelData(flags: List<Boolean>): ItemStack {
+        return withMeta { withCustomModelData(flags) }
+    }
+
+    @JvmName("withCustomModelDataflagsBoolean")
+    fun withCustomModelData(vararg flags: Boolean): ItemStack {
+        return withMeta { withCustomModelData(*flags) }
+    }
+
+    @JvmName("withCustomModelDatastringsListString")
+    fun withCustomModelData(strings: List<String>): ItemStack {
+        return withMeta { withCustomModelData(strings) }
+    }
+
+    @JvmName("withCustomModelDatastringsString")
+    fun withCustomModelData(vararg string: String): ItemStack {
+        return withMeta { withCustomModelData(*string) }
+    }
+
+    @JvmName("withCustomModelDatacolorsListInt")
+    fun withCustomModelData(colors: List<Int>): ItemStack {
+        return withMeta { withCustomModelData(colors) }
+    }
+
+    @JvmName("withCustomModelDatacolorListCustomColor")
+    fun withCustomModelData(colors: List<CustomColor>): ItemStack {
+        return withMeta { withCustomModelData(colors) }
+    }
+
+    @JvmName("withCustomModelDatacolorListCustomColor")
+    fun withCustomModelData(vararg color: CustomColor): ItemStack {
+        return withMeta { withCustomModelData(*color) }
+    }
+
+    @JvmName("withCustomModelDatawhatthefuckaaaaaaa")
+    fun withCustomModelData(floats: List<Float> = listOf(), flags: List<Boolean> = listOf(), strings: List<String> = listOf(), colors: List<Int> = listOf()): ItemStack {
+        return withMeta { withCustomModelData(floats, flags, strings, colors) }
+    }
+
+    val customModelData: CustomModelDataComponent
+        get() {
+            return components[CustomModelDataComponent::class] as CustomModelDataComponent? ?: CustomModelDataComponent(listOf(), listOf(), listOf(), listOf())
+        }
+
+    val maxStackSize: Int
+        get() {
+            return (components[MaxStackSizeComponent::class] as MaxStackSizeComponent?)?.size ?: material.maxStack
+        }
+
+    val unbreakable: Boolean
+        get() {
+            return components[UnbreakableComponent::class] != null
+        }
+
+    val hasGlint: Boolean
+        get() {
+            return (components[EnchantmentGlintOverrideComponent::class] as EnchantmentGlintOverrideComponent?)?.enchantGlint ?: false
+        }
+
+    var noxesiumImmovable: Boolean
+        set(value) {
+            if (value) {
+                setCustomData<Boolean>(Noxesium.IMMOVABLE_TAG, true)
+            } else {
+                removeCustomData(Noxesium.IMMOVABLE_TAG)
+            }
+        }
+        get() {
+            val tag = getCustomDataOrNull<Boolean>(Noxesium.IMMOVABLE_TAG) ?: false
+            return tag
+        }
+
+
+    private val customDataHolder = CustomDataHolder()
+
+    var customData: CompoundBinaryTag = CompoundBinaryTag.empty()
+
+    fun <T : Any> setCustomData(key: String, value: T) {
+        customDataHolder[key] = value
+        rebuildCustomDataNbt()
+    }
+
+    fun removeCustomData(key: String) {
+        customDataHolder.remove(key)
+        rebuildCustomDataNbt()
+    }
+
+    fun <T : Any> getCustomDataOrNull(key: String): T? {
+        updateCustomDataHolderFromComponent()
+        val value = customDataHolder.dataStore[key] ?: return null
+        return value as T
+    }
+
+    fun withNoxesiumImmovable(immovable: Boolean): ItemStack {
+        noxesiumImmovable = immovable
+        rebuildCustomDataNbt()
+        return this
+    }
+
+    private fun updateCustomDataHolderFromComponent() {
+        val component = components[CustomDataComponent::class] as CustomDataComponent? ?: return
+
+        component.nbt.forEach { nbt ->
+            val value = when (nbt.value) {
+                is StringBinaryTag -> (nbt.value as StringBinaryTag)
+                is IntBinaryTag -> (nbt.value as IntBinaryTag)
+                is FloatBinaryTag -> (nbt.value as FloatBinaryTag)
+                is DoubleBinaryTag -> (nbt.value as DoubleBinaryTag)
+                is LongBinaryTag -> (nbt.value as LongBinaryTag)
+                is ByteBinaryTag -> (nbt.value as ByteBinaryTag)
+                is ByteArrayBinaryTag -> (nbt.value as ByteArrayBinaryTag)
+                is CompoundBinaryTag -> (nbt.value as CompoundBinaryTag)
+                else -> throw UnsupportedEncodingException("${nbt.value::class.simpleName} is not supported in custom data nbt")
+            }
+            customDataHolder[nbt.key] = value
+        }
+    }
+
+    private fun rebuildCustomDataNbt() {
+        customData = nbt {
+            customDataHolder.dataStore.forEach { data ->
+                when (data.value) {
+                    is String -> withString(data.key, data.value as String)
+                    is Int -> withInt(data.key, data.value as Int)
+                    is Float -> withFloat(data.key, data.value as Float)
+                    is Double -> withDouble(data.key, data.value as Double)
+                    is Long -> withLong(data.key, data.value as Long)
+                    is Byte -> withByte(data.key, data.value as Byte)
+                    is Boolean -> withBoolean(data.key, data.value as Boolean)
+                    is CompoundBinaryTag -> withCompound(data.key, data.value as CompoundBinaryTag)
+                }
+            }
+        }
+        components.set(CustomDataComponent(customData))
+    }
+
+    fun <T : Any> getCustomData(key: String): T {
+        return getCustomDataOrNull<T>(key) ?: throw IllegalArgumentException("Value for key $key not found in data holder")
+    }
+
+    fun isEmpty(): Boolean = this.material == Items.AIR
+
+    override fun toString(): String = "ItemStack(${material.identifier}, ${components}, $amount)".stripComponentTags()
+
+    override fun equals(other: Any?): Boolean {
+        if (other == null || other !is ItemStack) return false
+        return material.getProtocolId() == other.material.getProtocolId()
+//                && attributes == other.attributes //TODO why no same??
+                && this.components.getComparisonHash() == other.components.getComparisonHash()
+
+    }
+
+    override fun hashCode(): Int {
+        var result = material.getProtocolId().hashCode()
+        result = 31 * result + this.components.getComparisonHash().hashCode()
+//        result = 31 * result + attributes.hashCode() //TODO why no same??
+        return result
+    }
+
+    fun isSameAs(other: ItemStack): Boolean {
+        return this == other
+    }
+}
+
+fun Collection<String>.toComponents(): Collection<Component> {
+    val components = mutableListOf<Component>()
+    this.forEach { components.add(it.toComponent()) }
+    return components
+}
+
+fun ItemStack.clone(): ItemStack {
+    return ItemStack(material, amount, components.clone(), existingMeta, attributes.toList())
+}

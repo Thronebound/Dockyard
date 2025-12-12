@@ -1,0 +1,10 @@
+package gg.thronebound.dockyard.registry
+
+import gg.thronebound.dockyard.registry.registries.DialogInputTypeRegistry
+
+object DialogInputTypes {
+    val BOOLEAN = DialogInputTypeRegistry["minecraft:boolean"]
+    val NUMBER_RANGE = DialogInputTypeRegistry["minecraft:number_range"]
+    val SINGLE_OPTION = DialogInputTypeRegistry["minecraft:single_option"]
+    val TEXT = DialogInputTypeRegistry["minecraft:text"]
+}

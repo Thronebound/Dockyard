@@ -1,0 +1,568 @@
+package gg.thronebound.dockyard.world
+
+import cz.lukynka.bindables.Bindable
+import cz.lukynka.bindables.BindablePool
+import cz.lukynka.prettylog.LogType
+import cz.lukynka.prettylog.log
+import gg.thronebound.dockyard.entity.Entity
+import gg.thronebound.dockyard.entity.EntityManager.despawnEntity
+import gg.thronebound.dockyard.entity.EntityManager.spawnEntity
+import gg.thronebound.dockyard.entity.LightningBolt
+import gg.thronebound.dockyard.events.*
+import gg.thronebound.dockyard.extentions.*
+import gg.thronebound.dockyard.location.Location
+import gg.thronebound.dockyard.math.vectors.Vector2f
+import gg.thronebound.dockyard.math.vectors.Vector3
+import gg.thronebound.dockyard.math.vectors.Vector3d
+import gg.thronebound.dockyard.math.vectors.Vector3f
+import gg.thronebound.dockyard.particles.data.BlockParticleData
+import gg.thronebound.dockyard.particles.spawnParticle
+import gg.thronebound.dockyard.player.Player
+import gg.thronebound.dockyard.protocol.packets.play.clientbound.ClientboundEntityTeleportPacket
+import gg.thronebound.dockyard.provider.PlayerMessageProvider
+import gg.thronebound.dockyard.registry.Blocks
+import gg.thronebound.dockyard.registry.Particles
+import gg.thronebound.dockyard.registry.registries.BlockRegistry
+import gg.thronebound.dockyard.registry.registries.DimensionType
+import gg.thronebound.dockyard.registry.registries.RegistryBlock
+import gg.thronebound.dockyard.scheduler.CustomRateScheduler
+import gg.thronebound.dockyard.scheduler.runLaterAsync
+import gg.thronebound.dockyard.scheduler.runnables.ticks
+import gg.thronebound.dockyard.schematics.Schematic
+import gg.thronebound.dockyard.sounds.playSound
+import gg.thronebound.dockyard.utils.*
+import gg.thronebound.dockyard.world.WorldManager.mainWorld
+import gg.thronebound.dockyard.world.block.BatchBlockUpdate
+import gg.thronebound.dockyard.world.block.Block
+import gg.thronebound.dockyard.world.block.BlockEntity
+import gg.thronebound.dockyard.world.chunk.Chunk
+import gg.thronebound.dockyard.world.chunk.ChunkPos
+import gg.thronebound.dockyard.world.chunk.ChunkUtils
+import gg.thronebound.dockyard.world.generators.VoidWorldGenerator
+import gg.thronebound.dockyard.world.generators.WorldGenerator
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet
+import net.kyori.adventure.nbt.CompoundBinaryTag
+import java.util.*
+import java.util.concurrent.CompletableFuture
+
+class World(var name: String, var generator: WorldGenerator, var dimensionType: DimensionType) : Disposable, PlayerMessageProvider {
+
+    override val playerGetter: Collection<Player>
+        get() = players
+
+    val eventPool = EventPool(Events, "$name world listeners")
+    val bindablePool = BindablePool()
+    val scheduler = CustomRateScheduler("${name}_world_scheduler")
+    val uuid: UUID = UUID.randomUUID()
+
+    val worldSeed = UUID.randomUUID().leastSignificantBits.toString()
+    var seed: Long = worldSeed.SHA256Long()
+    val random = Random(seed)
+
+    val difficulty: Bindable<Difficulty> = bindablePool.provideBindable(Difficulty.NORMAL)
+    val worldBorder = WorldBorder(this)
+    val weather: Bindable<Weather> = bindablePool.provideBindable(Weather.CLEAR)
+
+    val time: Bindable<Long> = bindablePool.provideBindable(1000L)
+    var worldAge: Long = 0
+
+    val chunks: Long2ObjectOpenHashMap<Chunk> = Long2ObjectOpenHashMap()
+    var defaultSpawnLocation = Location(0, 0, 0, this)
+
+    private val innerPlayers: MutableList<Player> = mutableListOf()
+    private val innerEntities: MutableList<Entity> = mutableListOf()
+
+    val players get() = innerPlayers.toList()
+    val entities get() = innerEntities.toList()
+
+    val isLoaded: Bindable<Boolean> = bindablePool.provideBindable(false)
+    val playerJoinQueue: MutableMap<Player, Location> = mutableMapOf()
+
+    var isHardcore: Boolean = false
+    var freezeTime: Boolean = false
+
+    var seaLevel = 0
+
+    val customDataBlocks: MutableMap<Int, Block> = mutableMapOf()
+
+    init {
+        require(!name.hasUpperCase()) { "World name cannot contain uppercase characters" }
+
+        scheduler.syncWithGlobalScheduler()
+        scheduler.runRepeating(1.ticks) {
+            tick()
+        }
+
+        weather.valueChanged { _ ->
+            players.forEach { player ->
+                runLaterAsync(1.ticks) {
+                    player.updateWeatherState()
+                }
+            }
+        }
+    }
+
+    inline fun schedule(crossinline unit: (World) -> Unit) {
+        if (isLoaded.value) {
+            unit.invoke(this)
+        } else {
+            isLoaded.valueChangedThenSelfDispose { event ->
+                if (event.newValue) unit.invoke(this) else throw UsedAfterDisposedException(this)
+            }
+        }
+    }
+
+    fun strikeLightning(location: Location) {
+        val entity = LightningBolt(location)
+        spawnEntity(entity)
+        scheduler.runLater(10.ticks) {
+            despawnEntity(entity)
+        }
+    }
+
+    fun tick() {
+        if (!isLoaded.value) return
+        val event = WorldTickEvent(this, scheduler, getWorldEventContext(this))
+        Events.dispatch(event)
+
+        if (event.cancelled) return
+
+        // tick entities
+        scheduler.run {
+            synchronized(innerEntities) {
+                entities.forEach {
+                    if (it.tickable) it.tick()
+                }
+            }
+        }
+    }
+
+    fun addEntity(entity: Entity) {
+        innerEntities.add(entity)
+    }
+
+    fun removeEntity(entity: Entity) {
+        innerEntities.remove(entity)
+    }
+
+    fun removePlayer(entity: Entity) {
+        synchronized(innerPlayers) {
+            innerPlayers.remove(entity)
+        }
+    }
+
+    fun addPlayer(player: Player) {
+        synchronized(innerPlayers) {
+            innerPlayers.add(player)
+        }
+    }
+
+    fun join(player: Player, location: Location? = null) {
+        if (player.world == this && player.isFullyInitialized) return
+        if (!isLoaded.value && !playerJoinQueue.containsKey(player)) {
+            playerJoinQueue[player] = location ?: player.location
+            debug("$player joined before world $name is loaded, added to joinQueue", logType = LogType.DEBUG)
+            return
+        }
+
+        val oldWorld = player.world
+
+        player.entityViewSystem.lock.lock()
+        player.chunkViewSystem.lock.lock()
+
+        oldWorld.removePlayer(player)
+        oldWorld.chunks.filter { chunk -> chunk.value.viewers.contains(player) }.forEach { (_, chunk) ->
+            chunk.removeViewer(player)
+        }
+
+        player.world.innerPlayers.removeIfPresent(player)
+        player.world = this
+
+        player.viewers.toList().forEach { viewer ->
+            viewer.removeViewer(player)
+            player.removeViewer(viewer)
+        }
+
+        player.entityViewSystem.clear()
+
+        addEntity(player)
+        addPlayer(player)
+
+        Events.dispatch(PlayerChangeWorldEvent(player, oldWorld, this, getPlayerEventContext(player).withContext(getWorldEventContext(oldWorld))))
+
+        playerJoinQueue.remove(player)
+
+        player.entityViewSystem.lock.unlock()
+        player.chunkViewSystem.lock.unlock()
+
+        player.respawn()
+        player.entityViewSystem.tick()
+        player.sendPacketToViewers(ClientboundEntityTeleportPacket(player, location ?: player.location))
+
+        player.isFullyInitialized = true
+        player.updateWorldTime()
+    }
+
+    fun load(): CompletableFuture<Unit> {
+        val future = CompletableFuture<Unit>()
+        val task = scheduler.runAsync {
+            if (generator.generateBaseChunks) {
+                generateBaseChunks(6)
+            }
+            generator.onWorldLoad(this)
+        }
+
+        task.thenAccept {
+            log("World $name has finished loading!", WorldManager.LOG_TYPE)
+            isLoaded.value = true
+            playerJoinQueue.forEach { (player, location) ->
+                join(player, location)
+            }
+            val event = WorldFinishLoadingEvent(this, getWorldEventContext(this))
+            Events.dispatch(event)
+            future.complete(Unit)
+        }
+
+        time.valueChanged {
+            innerPlayers.forEach { player ->
+                player.updateWorldTime()
+            }
+        }
+
+        eventPool.on<ServerTickEvent> {
+            worldAge++
+            if (freezeTime) {
+                if (worldAge % 5L == 0L) {
+                    time.triggerUpdate()
+                }
+            } else {
+                time.setSilently(time.value + 1)
+            }
+        }
+        return future
+    }
+
+    fun getChunkAt(x: Int, z: Int): Chunk? {
+        val chunkX = ChunkUtils.getChunkCoordinate(x)
+        val chunkZ = ChunkUtils.getChunkCoordinate(z)
+        return getChunk(chunkX, chunkZ)
+    }
+
+    fun getChunkAt(location: Location): Chunk? = getChunkAt(location.x.toInt(), location.z.toInt())
+
+    fun getChunk(pos: ChunkPos): Chunk? {
+        return getChunk(pos.x, pos.z)
+    }
+
+    fun getChunk(x: Int, z: Int): Chunk? {
+        return chunks.getOrDefault(ChunkUtils.getChunkIndex(x, z), null)
+    }
+
+    fun destroyNaturally(vector: Vector3) {
+        destroyNaturally(vector.toLocation(this))
+    }
+
+    fun destroyNaturally(x: Int, y: Int, z: Int) {
+        destroyNaturally(Location(x, y, z, this))
+    }
+
+    fun destroyNaturally(location: Location) {
+        val block = location.block
+        if (block.isAir()) return
+        setBlock(location, Blocks.AIR)
+        players.playSound(block.registryBlock.sounds.breakSound, location)
+        players.spawnParticle(
+            location.add(0.5, 0.5, 0.5),
+            Particles.BLOCK,
+            amount = 35,
+            offset = Vector3f(0.3f),
+            particleData = BlockParticleData(block)
+        )
+    }
+
+    fun setBlock(x: Int, y: Int, z: Int, block: RegistryBlock) {
+        setBlock(x, y, z, block.toBlock())
+    }
+
+    fun setBlock(x: Int, y: Int, z: Int, block: Block) {
+        val chunk = getChunkAt(x, z) ?: throw IllegalStateException("Chunk at $x, $y is does not exist!")
+        chunk.setBlock(x, y, z, block, true)
+    }
+
+    fun getBlock(location: Location): Block = this.getBlock(location.x.toInt(), location.y.toInt(), location.z.toInt())
+
+    fun getBlock(vector3: Vector3): Block = this.getBlock(vector3.x, vector3.y, vector3.z)
+
+    fun getBlock(x: Int, y: Int, z: Int): Block {
+        val chunk = getChunkAt(x, z) ?: throw IllegalStateException("Chunk at $x, $z does not exist!")
+        return chunk.getBlock(x, y, z)
+    }
+
+    fun setBlockState(x: Int, y: Int, z: Int, states: Map<String, String>) {
+        val location = Location(x, y, z, this)
+        val existingBlock = getBlock(location)
+        val existingBlockStates = existingBlock.blockStates
+        val newStates = mutableMapOf<String, String>()
+        newStates.putAll(existingBlockStates)
+        states.forEach { newStates[it.key] = it.value }
+
+        setBlock(location, Block(existingBlock.registryBlock, newStates, existingBlock.customData))
+    }
+
+    fun setBlockState(x: Int, y: Int, z: Int, vararg states: Pair<String, String>) {
+        setBlockState(x, y, z, states.toMap())
+    }
+
+    fun setBlockState(location: Location, states: Map<String, String>) {
+        setBlockState(location.x.toInt(), location.y.toInt(), location.z.toInt(), states)
+    }
+
+    fun setBlockState(location: Location, vararg states: Pair<String, String>) {
+        setBlockState(location.x.toInt(), location.y.toInt(), location.z.toInt(), states.toMap())
+    }
+
+    fun setBlock(location: Location, block: Block) {
+        this.setBlock(location.x.toInt(), location.y.toInt(), location.z.toInt(), block)
+    }
+
+    fun setBlock(location: Location, registryBlock: RegistryBlock) {
+        this.setBlock(location, registryBlock.toBlock())
+    }
+
+    fun setBlock(vector: Vector3, registryBlock: RegistryBlock) {
+        this.setBlock(vector, registryBlock.toBlock())
+    }
+
+    fun setBlock(vector: Vector3, block: Block) {
+        this.setBlock(vector.toLocation(this), block)
+    }
+
+    fun setBlockRaw(location: Location, blockStateId: Int, updateChunk: Boolean = true) {
+        setBlockRaw(location.x.toInt(), location.y.toInt(), location.z.toInt(), blockStateId, updateChunk)
+    }
+
+    fun getBlockEntityDataOrNull(location: Location): BlockEntity? {
+        return getBlockEntityDataOrNull(location.x.toInt(), location.y.toInt(), location.z.toInt())
+    }
+
+    fun getBlockEntityDataOrNull(x: Int, y: Int, z: Int): BlockEntity? {
+        val chunk = getChunkAt(x, z) ?: throw IllegalStateException("Chunk at $x, $y is does not exist!")
+        return chunk.getBlockEntityDataOrNull(x, y, z)
+    }
+
+    fun setBlockEntityData(location: Location, data: CompoundBinaryTag, registryBlock: RegistryBlock, shouldCache: Boolean) {
+        this.setBlockEntityData(location.x.toInt(), location.y.toInt(), location.z.toInt(), data, registryBlock, shouldCache)
+    }
+
+    fun setBlockEntityData(x: Int, y: Int, z: Int, data: CompoundBinaryTag, registryBlock: RegistryBlock, shouldCache: Boolean = true) {
+        val chunk = getChunkAt(x, z) ?: throw IllegalStateException("Chunk at $x, $y is does not exist!")
+        chunk.setBlockEntityData(x, y, z, data, registryBlock, shouldCache)
+    }
+
+    fun setBlockRaw(x: Int, y: Int, z: Int, blockStateId: Int, updateChunk: Boolean = true) {
+        val chunk = getChunkAt(x, z) ?: return
+        chunk.setBlockRaw(x, y, z, blockStateId, updateChunk)
+    }
+
+    inline fun batchBlockUpdate(builder: BatchBlockUpdate.() -> Unit): CompletableFuture<World> {
+        val update = BatchBlockUpdate(this)
+        builder.invoke(update)
+        return batchBlockUpdate(update)
+    }
+
+    fun batchBlockUpdate(update: BatchBlockUpdate): CompletableFuture<World> {
+        check(isLoaded.value) { "World has not been fully loaded yet! Please use World#schedule or wait until world is fully loaded" }
+        val future = CompletableFuture<World>()
+
+        scheduler.runAsync {
+            val chunks: MutableList<Chunk> = mutableListOf()
+            update.updates.forEach { (location, block) ->
+                val chunk = getOrGenerateChunk(
+                    ChunkUtils.getChunkCoordinate(location.x), ChunkUtils.getChunkCoordinate(location.z)
+                )
+                if (!chunks.contains(chunk)) chunks.add(chunk)
+
+                setBlockRaw(location, block.getProtocolId(), false)
+            }
+            chunks.forEach { chunk ->
+                chunk.update()
+            }
+
+            future.complete(this)
+        }
+
+        return future
+    }
+
+    fun fill(from: Location, to: Location, block: RegistryBlock): CompletableFuture<World> {
+        return fill(from, to, block)
+    }
+
+    fun fill(from: Location, to: Location, block: Block): CompletableFuture<World> {
+        return batchBlockUpdate {
+            fill(from, to, block)
+        }
+    }
+
+    fun getOrGenerateChunk(pos: ChunkPos): Chunk {
+        return getOrGenerateChunk(pos.x, pos.z)
+    }
+
+    fun getOrGenerateChunk(x: Int, z: Int): Chunk {
+        val chunk = getChunk(x, z)
+        if (chunk == null) {
+            generateChunk(x, z)
+            return getChunk(x, z)!!
+        }
+        return chunk
+    }
+
+    fun generateChunk(pos: ChunkPos): Chunk {
+        return generateChunk(pos.x, pos.z)
+    }
+
+    fun generateChunk(x: Int, z: Int): Chunk {
+        val chunk = getChunk(x, z) ?: Chunk(x, z, this)
+        // Special case for void world generator for fast void world loading. //TODO optimizations to rest of the world generators
+        when (generator) {
+            is VoidWorldGenerator -> {
+                chunk.sections.forEach { section ->
+                    section.fillBiome((generator as VoidWorldGenerator).defaultBiome.getProtocolId())
+                    section.fillBlock(BlockRegistry.AIR.defaultBlockStateId)
+                }
+            }
+
+            else -> {
+                for (localX in 0..<16) {
+                    for (localZ in 0..<16) {
+                        val worldX = x * 16 + localX
+                        val worldZ = z * 16 + localZ
+
+                        for (y in 0..<dimensionType.height) {
+                            chunk.setBlock(localX, y, localZ, generator.getBlock(worldX, y, worldZ), false)
+                            chunk.setBiome(localX, y, localZ, generator.getBiome(worldX, y, worldZ), false)
+                        }
+                    }
+                }
+            }
+        }
+        chunk.update()
+        if (getChunk(x, z) == null) {
+            synchronized(chunks) {
+                chunks[ChunkUtils.getChunkIndex(x, z)] = (chunk)
+            }
+        }
+        return chunk
+    }
+
+    fun generateBaseChunks(size: Int) {
+        val vector = Vector2f(size.toFloat(), size.toFloat())
+        ((vector.x.toInt() * -1)..vector.x.toInt()).forEach chunkLoop@{ chunkX ->
+            for (chunkZ in (vector.y.toInt() * -1)..vector.y.toInt()) {
+                generateChunk(chunkX, chunkZ)
+            }
+        }
+    }
+
+    fun locationAt(x: Int, y: Int, z: Int): Location {
+        return Location(x, y, z, this)
+    }
+
+    fun locationAt(vector: Vector3): Location {
+        return Location(vector.x, vector.y, vector.z, this)
+    }
+
+    fun locationAt(vector: Vector3d): Location {
+        return Location(vector.x, vector.y, vector.z, this)
+    }
+
+    fun locationAt(vector: Vector3f): Location {
+        return Location(vector.x, vector.y, vector.z, this)
+    }
+
+    fun World.placeSchematicAsync(schematic: Schematic, location: Location): CompletableFuture<Unit> {
+        return this.scheduler.runAsync {
+            this.placeSchematic(schematic, location)
+        }
+    }
+
+    fun placeSchematic(
+        schematic: Schematic,
+        location: Location,
+    ) {
+        val blocks = schematic.blocks.toByteBuf()
+        val updateChunks = ObjectOpenHashSet<Chunk>()
+        val loadChunk = ObjectOpenHashSet<ChunkPos>()
+        val batchBlockUpdate = ObjectOpenHashSet<Schematic.SchematicBlock>()
+        val flippedPallet = schematic.palette.reversed()
+
+        for (y in 0 until schematic.size.y) {
+            for (z in 0 until schematic.size.z) {
+                for (x in 0 until schematic.size.x) {
+
+                    val localSpacePlaceVec = Vector3(x, y, z)
+                    val localSpacePlaceLoc = localSpacePlaceVec.toLocation(location.world)
+                    val placeLoc = localSpacePlaceLoc.add(location)
+                    val id = blocks.readVarInt()
+                    val block = flippedPallet[id] ?: Schematic.RED_STAINED_GLASS
+
+                    val chunkPos = ChunkPos.fromLocation(placeLoc)
+                    val chunk = placeLoc.world.getOrGenerateChunk(chunkPos)
+
+                    loadChunk.add(chunkPos)
+                    updateChunks.add(chunk)
+
+                    val schematicBlock: Schematic.SchematicBlock = if (schematic.blockEntities.containsKey(localSpacePlaceVec)) {
+                        Schematic.SchematicBlock.BlockEntity(localSpacePlaceLoc, placeLoc, block, schematic.blockEntities.getOrThrow(localSpacePlaceVec))
+                    } else {
+                        Schematic.SchematicBlock.Normal(localSpacePlaceLoc, placeLoc, block.getProtocolId())
+                    }
+                    batchBlockUpdate.add(schematicBlock)
+                }
+            }
+        }
+
+        batchBlockUpdate.forEach { schematicBlock ->
+            try {
+                when (schematicBlock) {
+                    is Schematic.SchematicBlock.Normal -> {
+                        this.setBlockRaw(schematicBlock.location, schematicBlock.id, false)
+                    }
+
+                    is Schematic.SchematicBlock.BlockEntity -> {
+                        this.setBlockRaw(schematicBlock.location, schematicBlock.block.getProtocolId(), false)
+                        this.setBlockEntityData(schematicBlock.location, schematicBlock.data, schematicBlock.block.registryBlock, false)
+                    }
+                }
+
+            } catch (ex: Exception) {
+                log("Error while placing block in schematic at ${location}: $ex", LogType.ERROR)
+                log(ex)
+            }
+        }
+
+        updateChunks.forEach { chunk ->
+            chunk.update()
+        }
+    }
+
+    override fun dispose() {
+        players.forEach { player ->
+            player.teleport(mainWorld.defaultSpawnLocation)
+            innerPlayers.remove(player)
+        }
+        entities.forEach { entity ->
+            if (entity is Player) return@forEach
+            despawnEntity(entity)
+        }
+        customDataBlocks.clear()
+        isLoaded.value = false
+        chunks.clear()
+
+        WorldManager.worlds.remove(this.name)
+        scheduler.dispose()
+        eventPool.dispose()
+        bindablePool.dispose()
+    }
+}

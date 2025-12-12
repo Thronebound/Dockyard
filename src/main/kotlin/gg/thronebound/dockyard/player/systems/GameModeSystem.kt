@@ -1,0 +1,58 @@
+package gg.thronebound.dockyard.player.systems
+
+import cz.lukynka.bindables.Bindable
+import gg.thronebound.dockyard.extentions.properStrictCase
+import gg.thronebound.dockyard.player.Player
+import gg.thronebound.dockyard.player.PlayerInfoUpdate
+import gg.thronebound.dockyard.protocol.packets.play.clientbound.ClientboundGameEventPacket
+import gg.thronebound.dockyard.protocol.packets.play.clientbound.ClientboundPlayerInfoUpdatePacket
+import gg.thronebound.dockyard.protocol.packets.play.clientbound.GameEvent
+
+
+class GameModeSystem(val player: Player): PlayerSystem {
+
+    fun handle(bindable: Bindable<GameMode>) {
+        bindable.valueChanged {
+            player.sendPacket(ClientboundGameEventPacket(GameEvent.CHANGE_GAME_MODE, it.newValue.ordinal.toFloat()))
+            when (it.newValue) {
+                GameMode.SPECTATOR -> {
+                    player.canFly.value = true
+                    player.isFlying.value = true
+                    player.isInvulnerable = true
+                }
+                GameMode.CREATIVE -> {
+                    player.canFly.value = true
+                    player.isFlying.value = player.isFlying.value
+                    player.isInvulnerable = true
+                }
+
+                GameMode.ADVENTURE,
+                GameMode.SURVIVAL -> {
+                    if (it.oldValue == GameMode.CREATIVE || it.oldValue == GameMode.SPECTATOR) {
+                        player.canFly.value = false
+                        player.isFlying.value = false
+                        player.isInvulnerable = false
+                    }
+                }
+            }
+
+            player.isInvisible.value = it.newValue == GameMode.SPECTATOR
+            player.refreshAbilities()
+            val updatePacket = ClientboundPlayerInfoUpdatePacket(mapOf(player.uuid to listOf(PlayerInfoUpdate.UpdateGameMode(it.newValue))))
+            player.sendPacket(updatePacket)
+            player.sendToViewers(updatePacket)
+        }
+    }
+
+    override fun dispose() {}
+
+}
+
+enum class GameMode {
+    SURVIVAL,
+    CREATIVE,
+    ADVENTURE,
+    SPECTATOR;
+
+    override fun toString(): String = this.name.properStrictCase()
+}

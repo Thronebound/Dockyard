@@ -1,0 +1,234 @@
+package gg.thronebound.dockyard.commands
+
+import gg.thronebound.dockyard.entity.Entity
+import gg.thronebound.dockyard.extentions.writeEnum
+import gg.thronebound.dockyard.extentions.writeString
+import gg.thronebound.dockyard.player.Player
+import gg.thronebound.dockyard.registry.registries.Item
+import gg.thronebound.dockyard.registry.registries.Particle
+import gg.thronebound.dockyard.registry.registries.PotionEffect
+import gg.thronebound.dockyard.registry.registries.RegistryBlock
+import io.github.dockyardmc.scroll.LegacyTextColor
+import gg.thronebound.dockyard.sounds.Sound
+import gg.thronebound.dockyard.world.World
+import io.netty.buffer.ByteBuf
+import java.util.*
+import kotlin.experimental.or
+import kotlin.reflect.KClass
+
+interface CommandArgument {
+    var expectedType: KClass<*>
+    var parser: ArgumentCommandNodeParser
+    fun write(buffer: ByteBuf)
+}
+
+class StringArgument(
+    val type: BrigadierStringType = BrigadierStringType.SINGLE_WORD,
+    val staticCompletions: MutableList<String> = mutableListOf(),
+) : CommandArgument {
+    override var expectedType: KClass<*> = String::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.STRING
+
+    override fun write(buffer: ByteBuf) {
+        buffer.writeEnum<BrigadierStringType>(type)
+    }
+}
+
+class WorldArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = World::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.STRING
+
+    override fun write(buffer: ByteBuf) {
+        buffer.writeEnum<BrigadierStringType>(BrigadierStringType.SINGLE_WORD)
+    }
+}
+
+class SoundArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = Sound::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.RESOURCE_KEY
+
+    override fun write(buffer: ByteBuf) {
+        buffer.writeString("minecraft:sound")
+    }
+}
+
+class PotionEffectArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = PotionEffect::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.RESOURCE_KEY
+
+    override fun write(buffer: ByteBuf) {
+        buffer.writeString("minecraft:effect")
+    }
+}
+
+class PlayerArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = Player::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.STRING
+
+    override fun write(buffer: ByteBuf) {
+        buffer.writeEnum<BrigadierStringType>(BrigadierStringType.SINGLE_WORD)
+    }
+}
+
+
+class EntityArgument(
+    var onlyAllowPlayer: Boolean = true,
+) : CommandArgument {
+    override var expectedType: KClass<*> = Entity::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.ENTITY
+
+    override fun write(buffer: ByteBuf) {
+        var mask: Byte = 0x00
+        mask = mask or 0x01
+        if (onlyAllowPlayer) mask = mask or 0x02
+        buffer.writeByte(mask.toInt())
+    }
+}
+
+class BlockArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = RegistryBlock::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.BLOCK
+
+    override fun write(buffer: ByteBuf) {} // No extra data
+}
+
+class BlockStateArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = RegistryBlock::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.BLOCK_STATE
+
+    override fun write(buffer: ByteBuf) {} // No extra data
+}
+
+class ItemArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = Item::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.ITEM
+
+    override fun write(buffer: ByteBuf) {} // No extra data
+}
+
+
+class LegacyTextColorArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = LegacyTextColor::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.LEGACY_TEXT_COLOR
+
+    override fun write(buffer: ByteBuf) {} // No extra data
+}
+
+class ParticleArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = Particle::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.PARTICLE
+
+    override fun write(buffer: ByteBuf) {} // No extra data
+}
+
+class IntArgument(
+    var min: Int? = null,
+    var max: Int? = null,
+) : CommandArgument {
+    override var expectedType: KClass<*> = Int::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.INTEGER
+
+    override fun write(buffer: ByteBuf) {
+        var mask: Byte = 0x00
+        if (min != null) mask = mask or 0x01
+        if (max != null) mask = mask or 0x01
+        buffer.writeByte(mask.toInt())
+        if (min != null) buffer.writeInt(min!!)
+        if (max != null) buffer.writeInt(max!!)
+    }
+}
+
+class DoubleArgument(
+    var min: Double? = null,
+    var max: Double? = null,
+) : CommandArgument {
+    override var expectedType: KClass<*> = Double::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.DOUBLE
+
+    override fun write(buffer: ByteBuf) {
+        var mask: Byte = 0x00
+        if (min != null) mask = mask or 0x01
+        if (max != null) mask = mask or 0x01
+        buffer.writeByte(mask.toInt())
+        if (min != null) buffer.writeDouble(min!!)
+        if (max != null) buffer.writeDouble(max!!)
+    }
+}
+
+class FloatArgument(
+    var min: Float? = null,
+    var max: Float? = null,
+) : CommandArgument {
+    override var expectedType: KClass<*> = Float::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.FLOAT
+
+    override fun write(buffer: ByteBuf) {
+        var mask: Byte = 0x00
+        if (min != null) mask = mask or 0x01
+        if (max != null) mask = mask or 0x01
+        buffer.writeByte(mask.toInt())
+        if (min != null) buffer.writeFloat(min!!)
+        if (max != null) buffer.writeFloat(max!!)
+    }
+}
+
+class BooleanArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = Boolean::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.BOOL
+
+    override fun write(buffer: ByteBuf) {} // No extra data
+}
+
+class LongArgument(
+    var min: Long? = null,
+    var max: Long? = null,
+) : CommandArgument {
+    override var expectedType: KClass<*> = Long::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.LONG
+
+    override fun write(buffer: ByteBuf) {
+        var mask: Byte = 0x00
+        if (min != null) mask = mask or 0x01
+        if (max != null) mask = mask or 0x01
+        buffer.writeByte(mask.toInt())
+        if (min != null) buffer.writeLong(min!!)
+        if (max != null) buffer.writeLong(max!!)
+    }
+}
+
+class UUIDArgument(
+) : CommandArgument {
+    override var expectedType: KClass<*> = UUID::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.UUID
+
+    override fun write(buffer: ByteBuf) {} // No extra data
+}
+
+class EnumArgument(
+    val enumType: KClass<*>,
+) : CommandArgument {
+    override var expectedType: KClass<*> = String::class
+    override var parser: ArgumentCommandNodeParser = ArgumentCommandNodeParser.STRING
+    override fun write(buffer: ByteBuf) {
+        buffer.writeEnum<BrigadierStringType>(BrigadierStringType.SINGLE_WORD)
+    }
+}
+
+
+class CommandArgumentData(
+    val argument: CommandArgument,
+    val optional: Boolean = false,
+    var returnedValue: Any? = null,
+    var expectedReturnValueType: KClass<*>,
+    var suggestions: ((Player) -> Collection<String>)? = null
+)
