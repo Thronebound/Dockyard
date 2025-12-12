@@ -57,7 +57,7 @@ class Advancement(
 
     override var autoViewable: Boolean = false
 
-    private val eventPool =EventPool(Events, "Advancement Listeners")
+    private val eventPool = EventPool(Events, "Advancement Listeners")
 
     init {
         require(icon.material != Items.AIR) { "advancement icon can't be air" }
